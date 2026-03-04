@@ -1,0 +1,335 @@
+import os
+import hashlib
+import time
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+
+# ------------------------------------------------------------
+# Hilfsfunktionen
+# ------------------------------------------------------------
+
+def hash_file_sha256(path, chunk_size=1024 * 1024):
+    """Berechnet den SHA-256 Hash einer Datei."""
+    sha = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            data = f.read(chunk_size)
+            if not data:
+                break
+            sha.update(data)
+    return sha.hexdigest()
+
+
+def scan_directory(root_path, min_size, extensions, progress_callback=None):
+    """
+    Durchsucht ein Verzeichnis rekursiv und liefert:
+    dict: hash -> list of (path, size)
+    """
+    hash_map = {}
+
+    # Alle Dateien zählen (für Fortschrittsbalken)
+    total_files = 0
+    for _, _, files in os.walk(root_path):
+        total_files += len(files)
+
+    processed = 0
+
+    for dirpath, _, filenames in os.walk(root_path):
+        for filename in filenames:
+            processed += 1
+
+            full_path = os.path.join(dirpath, filename)
+
+            # Fortschritt melden
+            if progress_callback:
+                progress_callback(processed, total_files)
+
+            try:
+                if not os.path.isfile(full_path):
+                    continue
+
+                size = os.path.getsize(full_path)
+
+                # Mindestgröße
+                if size < min_size:
+                    continue
+
+                # Dateitypfilter
+                if extensions:
+                    if not any(filename.lower().endswith(ext) for ext in extensions):
+                        continue
+
+                file_hash = hash_file_sha256(full_path)
+                hash_map.setdefault(file_hash, []).append((full_path, size))
+
+            except (PermissionError, OSError):
+                continue
+
+    return hash_map
+
+
+def build_duplicate_groups(hash_map):
+    """Filtert nur Hashes mit mehr als einer Datei."""
+    return [entries for entries in hash_map.values() if len(entries) > 1]
+
+
+# ------------------------------------------------------------
+# GUI Klasse
+# ------------------------------------------------------------
+
+class DuplicateFileFinderGUI:
+    def __init__(self, master):
+        self.master = master
+        self.master.title("Duplicate File Finder (DFF)")
+        self.master.geometry("1000x700")
+
+        self.selected_folder = tk.StringVar()
+        self.base_folder = None  # Für relative Pfade
+        self.duplicate_groups = []
+        self.listbox_index_to_file = {}
+
+        self.create_widgets()
+
+    # --------------------------------------------------------
+    # GUI Aufbau
+    # --------------------------------------------------------
+    def create_widgets(self):
+        frame_top = tk.Frame(self.master)
+        frame_top.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(frame_top, text="Startordner:").pack(side=tk.LEFT)
+        tk.Entry(frame_top, textvariable=self.selected_folder, width=60).pack(side=tk.LEFT, padx=5)
+        tk.Button(frame_top, text="Ordner wählen", command=self.choose_folder).pack(side=tk.LEFT, padx=5)
+        tk.Button(frame_top, text="Scannen", command=self.start_scan_thread).pack(side=tk.LEFT, padx=5)
+
+        # Filterbereich
+        frame_filter = tk.Frame(self.master)
+        frame_filter.pack(fill=tk.X, padx=10)
+
+        tk.Label(frame_filter, text="Mindestgröße (MB):").pack(side=tk.LEFT)
+        self.min_size_entry = tk.Entry(frame_filter, width=6)
+        self.min_size_entry.insert(0, "0")
+        self.min_size_entry.pack(side=tk.LEFT, padx=5)
+
+        tk.Label(frame_filter, text="Dateitypen (z.B. .jpg,.png,.mp4):").pack(side=tk.LEFT)
+        self.ext_entry = tk.Entry(frame_filter, width=25)
+        self.ext_entry.pack(side=tk.LEFT, padx=5)
+
+        # Fortschrittsbalken
+        frame_progress = tk.Frame(self.master)
+        frame_progress.pack(fill=tk.X, padx=10, pady=5)
+
+        self.progress = ttk.Progressbar(frame_progress, length=400)
+        self.progress.pack(side=tk.LEFT, padx=5)
+
+        self.progress_label = tk.Label(frame_progress, text="")
+        self.progress_label.pack(side=tk.LEFT)
+
+        # Ergebnisliste
+        frame_middle = tk.Frame(self.master)
+        frame_middle.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        tk.Label(frame_middle, text="Gefundene Dubletten:").pack(anchor="w")
+
+        self.listbox = tk.Listbox(frame_middle, selectmode=tk.EXTENDED)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = tk.Scrollbar(frame_middle, orient=tk.VERTICAL, command=self.listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox.config(yscrollcommand=scrollbar.set)
+
+        # Aktionen
+        frame_bottom = tk.Frame(self.master)
+        frame_bottom.pack(fill=tk.X, padx=10, pady=10)
+
+        self.summary_var = tk.StringVar(value="Noch keine Analyse durchgeführt.")
+        tk.Label(frame_bottom, textvariable=self.summary_var).pack(anchor="w")
+
+        tk.Button(frame_bottom, text="Pro Gruppe: alle bis auf eine markieren",
+                  command=self.select_all_but_one).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(frame_bottom, text="Ausgewählte löschen",
+                  command=self.delete_selected).pack(side=tk.LEFT, padx=5)
+
+    # --------------------------------------------------------
+    # Ordnerwahl
+    # --------------------------------------------------------
+    def choose_folder(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.selected_folder.set(folder)
+
+    # --------------------------------------------------------
+    # Scan starten (Thread)
+    # --------------------------------------------------------
+    def start_scan_thread(self):
+        thread = threading.Thread(target=self.scan)
+        thread.start()
+
+    # --------------------------------------------------------
+    # Scan Logik
+    # --------------------------------------------------------
+    def scan(self):
+        folder = self.selected_folder.get().strip()
+        if not folder:
+            messagebox.showwarning("Hinweis", "Bitte zuerst einen Startordner wählen.")
+            return
+
+        self.base_folder = folder  # Für relative Pfade
+
+        min_size = int(float(self.min_size_entry.get()) * 1024 * 1024)
+        extensions = [e.strip().lower() for e in self.ext_entry.get().split(",") if e.strip()]
+
+        self.listbox.delete(0, tk.END)
+        self.listbox_index_to_file.clear()
+        self.summary_var.set("Scanne...")
+
+        def update_progress(done, total):
+            percent = int((done / total) * 100)
+            self.progress["value"] = percent
+            self.progress_label.config(text=f"{percent}%")
+
+        hash_map = scan_directory(folder, min_size, extensions, update_progress)
+        groups = build_duplicate_groups(hash_map)
+        self.duplicate_groups = groups
+
+        self.progress["value"] = 0
+        self.progress_label.config(text="")
+
+        self.display_results(groups)
+
+    # --------------------------------------------------------
+    # Ergebnisse anzeigen
+    # --------------------------------------------------------
+    def display_results(self, groups):
+        total_wasted = 0
+        total_duplicates = 0
+        index = 0
+
+        for group in groups:
+            self.listbox.insert(tk.END, "------------------ Gruppe ------------------")
+            self.listbox.itemconfig(tk.END, foreground="blue")
+            index += 1
+
+            wasted = group[0][1] * (len(group) - 1)
+            total_wasted += wasted
+            total_duplicates += len(group) - 1
+
+            for path, size in group:
+                relative_path = os.path.relpath(path, self.base_folder)
+                text = f"{relative_path} ({size/1024/1024:.2f} MB)"
+                self.listbox.insert(tk.END, text)
+                self.listbox_index_to_file[index] = (path, size)
+                index += 1
+
+            self.listbox.insert(tk.END, "")
+            index += 1
+
+        if not groups:
+            self.summary_var.set("Keine Dubletten gefunden.")
+        else:
+            mb = total_wasted / 1024 / 1024
+            gb = mb / 1024
+            self.summary_var.set(
+                f"Dubletten: {total_duplicates} | Verschwendet: {mb:.2f} MB ({gb:.2f} GB)"
+            )
+
+    # --------------------------------------------------------
+    # Automatische Vorauswahl
+    # --------------------------------------------------------
+    def select_all_but_one(self):
+        self.listbox.selection_clear(0, tk.END)
+
+        current_group = []
+
+        for i in range(self.listbox.size()):
+            text = self.listbox.get(i)
+
+            if text.startswith("------------------ Gruppe"):
+                if len(current_group) > 1:
+                    for idx in current_group[1:]:
+                        self.listbox.selection_set(idx)
+                current_group = []
+            else:
+                if i in self.listbox_index_to_file:
+                    current_group.append(i)
+
+        if len(current_group) > 1:
+            for idx in current_group[1:]:
+                self.listbox.selection_set(idx)
+
+    # --------------------------------------------------------
+    # Löschen + Log
+    # --------------------------------------------------------
+    def delete_selected(self):
+        selected = self.listbox.curselection()
+        files = [(self.listbox_index_to_file[i]) for i in selected if i in self.listbox_index_to_file]
+
+        if not files:
+            messagebox.showinfo("Info", "Keine Dateien ausgewählt.")
+            return
+
+        total = sum(size for _, size in files)
+
+        preview = "\n".join(path for path, _ in files[:10])
+        msg = f"{len(files)} Dateien löschen?\nGesamt: {total/1024/1024:.2f} MB\n\nBeispiele:\n{preview}"
+
+        if not messagebox.askyesno("Bestätigen", msg):
+            return
+
+        deleted = []
+        for path, size in files:
+            try:
+                os.remove(path)
+                deleted.append({"path": path, "size": size})
+            except:
+                pass
+
+        self.write_log(deleted)
+        messagebox.showinfo("Fertig", f"{len(deleted)} Dateien gelöscht. Log erstellt.")
+
+        self.start_scan_thread()
+
+    # --------------------------------------------------------
+    # Log schreiben (TXT)
+    # --------------------------------------------------------
+    def write_log(self, deleted_entries):
+        """
+        Schreibt eine Log-Datei (TXT) mit den gelöschten Dateien.
+        Der Log wird im Unterordner 'logs' gespeichert.
+        """
+        log_dir = "logs"
+        os.makedirs(log_dir, exist_ok=True)
+
+        timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        log_filename = os.path.join(log_dir, f"dff_report_{timestamp}.txt")
+
+        try:
+            with open(log_filename, "w", encoding="utf-8") as f:
+                f.write("Duplicate File Finder – Löschprotokoll\n")
+                f.write("=======================================\n\n")
+                f.write(f"Zeitpunkt: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Anzahl gelöschter Dateien: {len(deleted_entries)}\n\n")
+
+                total_size = sum(entry["size"] for entry in deleted_entries)
+                f.write(f"Gesamter freigegebener Speicherplatz: {total_size/1024/1024:.2f} MB\n\n")
+
+                f.write("Gelöschte Dateien:\n")
+                f.write("------------------\n")
+
+                for entry in deleted_entries:
+                    f.write(f"{entry['path']}  ({entry['size']/1024/1024:.2f} MB)\n")
+
+        except Exception as e:
+            messagebox.showerror("Fehler beim Schreiben des Logs", str(e))
+
+
+# ------------------------------------------------------------
+# Start
+# ------------------------------------------------------------
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = DuplicateFileFinderGUI(root)
+    root.mainloop()
