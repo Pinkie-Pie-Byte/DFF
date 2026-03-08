@@ -22,21 +22,17 @@ def hash_file_sha256(path, chunk_size=1024 * 1024):
 
 
 def scan_directory(root_path, min_size, extensions, progress_callback=None):
-    hash_map = {}
+    """
+    Optimierte Version:
+    1) Dateien nach Größe gruppieren
+    2) Nur gleiche Größen hashen
+    """
 
-    total_files = 0
-    for _, _, files in os.walk(root_path):
-        total_files += len(files)
-
-    processed = 0
-
+    # Schritt 1: Alle passenden Dateien sammeln
+    all_files = []
     for dirpath, _, filenames in os.walk(root_path):
         for filename in filenames:
-            processed += 1
             full_path = os.path.join(dirpath, filename)
-
-            if progress_callback:
-                progress_callback(processed, total_files)
 
             try:
                 if not os.path.isfile(full_path):
@@ -50,11 +46,40 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None):
                     if not any(filename.lower().endswith(ext) for ext in extensions):
                         continue
 
-                file_hash = hash_file_sha256(full_path)
-                hash_map.setdefault(file_hash, []).append((full_path, size))
+                all_files.append((full_path, size))
 
             except:
                 continue
+
+    # Schritt 2: Dateien nach Größe gruppieren
+    size_map = {}
+    for path, size in all_files:
+        size_map.setdefault(size, []).append(path)
+
+    # Schritt 3: Nur Gruppen mit mehr als 1 Datei weiterverarbeiten
+    candidates = []
+    for size, files in size_map.items():
+        if len(files) > 1:
+            for f in files:
+                candidates.append((f, size))
+
+    total = len(candidates)
+    processed = 0
+
+    # Schritt 4: Hashen nur der Kandidaten
+    hash_map = {}
+
+    for path, size in candidates:
+        processed += 1
+
+        if progress_callback:
+            progress_callback(processed, total)
+
+        try:
+            file_hash = hash_file_sha256(path)
+            hash_map.setdefault(file_hash, []).append((path, size))
+        except:
+            continue
 
     return hash_map
 
@@ -311,9 +336,7 @@ class DuplicateFileFinderGUI:
         if f_index is not None:
             return  # kein Header
 
-        # Zustand umschalten
         self.group_states[g_index] = not self.group_states[g_index]
-
         self.render_groups()
 
     def render_groups(self):
@@ -381,7 +404,6 @@ class DuplicateFileFinderGUI:
         if not messagebox.askyesno("Bestätigen", msg):
             return
 
-        # Fortschritt zurücksetzen
         self.progress["value"] = 0
         self.progress_label.config(text="0%")
 
