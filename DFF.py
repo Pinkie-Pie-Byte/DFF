@@ -486,12 +486,20 @@ class DuplicateFileFinderGUI:
         self.start_scan_thread()
 
     # --------------------------------------------------------
-    # Log schreiben
+    # Log schreiben (Fix 1 – robust + Fallback)
     # --------------------------------------------------------
     def write_log(self, deleted_entries):
-        os.makedirs("logs", exist_ok=True)
+        # Ordner robust erstellen
+        try:
+            os.makedirs("logs", exist_ok=True)
+            log_dir = "logs"
+        except PermissionError:
+            # Fallback: Benutzerordner
+            log_dir = os.path.join(os.path.expanduser("~"), "DFF_logs")
+            os.makedirs(log_dir, exist_ok=True)
+
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"logs/dff_report_{timestamp}.txt"
+        filename = os.path.join(log_dir, f"dff_report_{timestamp}.txt")
 
         with open(filename, "w", encoding="utf-8") as f:
             f.write("Duplicate File Finder – Löschprotokoll\n")
