@@ -23,13 +23,9 @@ def hash_file_sha256(path, chunk_size=1024 * 1024):
 
 
 def scan_directory(root_path, min_size, extensions, progress_callback=None):
-    """
-    Durchsucht ein Verzeichnis rekursiv und liefert:
-    dict: hash -> list of (path, size)
-    """
+    """Durchsucht ein Verzeichnis rekursiv und liefert: dict(hash -> list of (path, size))"""
     hash_map = {}
 
-    # Alle Dateien zählen (für Fortschrittsbalken)
     total_files = 0
     for _, _, files in os.walk(root_path):
         total_files += len(files)
@@ -39,10 +35,8 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None):
     for dirpath, _, filenames in os.walk(root_path):
         for filename in filenames:
             processed += 1
-
             full_path = os.path.join(dirpath, filename)
 
-            # Fortschritt melden
             if progress_callback:
                 progress_callback(processed, total_files)
 
@@ -51,12 +45,9 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None):
                     continue
 
                 size = os.path.getsize(full_path)
-
-                # Mindestgröße
                 if size < min_size:
                     continue
 
-                # Dateitypfilter
                 if extensions:
                     if not any(filename.lower().endswith(ext) for ext in extensions):
                         continue
@@ -83,10 +74,10 @@ class DuplicateFileFinderGUI:
     def __init__(self, master):
         self.master = master
         self.master.title("Duplicate File Finder (DFF)")
-        self.master.geometry("1000x700")
+        self.master.geometry("1100x750")
 
         self.selected_folder = tk.StringVar()
-        self.base_folder = None  # Für relative Pfade
+        self.base_folder = None
         self.duplicate_groups = []
         self.listbox_index_to_file = {}
 
@@ -96,13 +87,20 @@ class DuplicateFileFinderGUI:
     # GUI Aufbau
     # --------------------------------------------------------
     def create_widgets(self):
+        style = ttk.Style()
+        style.theme_use("clam")
+
         frame_top = tk.Frame(self.master)
         frame_top.pack(fill=tk.X, padx=10, pady=10)
 
-        tk.Label(frame_top, text="Startordner:").pack(side=tk.LEFT)
+        tk.Label(frame_top, text="Startordner:", font=("Arial", 11, "bold")).pack(side=tk.LEFT)
         tk.Entry(frame_top, textvariable=self.selected_folder, width=60).pack(side=tk.LEFT, padx=5)
-        tk.Button(frame_top, text="Ordner wählen", command=self.choose_folder).pack(side=tk.LEFT, padx=5)
-        tk.Button(frame_top, text="Scannen", command=self.start_scan_thread).pack(side=tk.LEFT, padx=5)
+
+        self.btn_choose = ttk.Button(frame_top, text="📂 Ordner wählen", command=self.choose_folder)
+        self.btn_choose.pack(side=tk.LEFT, padx=5)
+
+        self.btn_scan = ttk.Button(frame_top, text="🔍 Scannen", command=self.start_scan_thread)
+        self.btn_scan.pack(side=tk.LEFT, padx=5)
 
         # Filterbereich
         frame_filter = tk.Frame(self.master)
@@ -113,7 +111,7 @@ class DuplicateFileFinderGUI:
         self.min_size_entry.insert(0, "0")
         self.min_size_entry.pack(side=tk.LEFT, padx=5)
 
-        tk.Label(frame_filter, text="Dateitypen (z.B. .jpg,.png,.mp4):").pack(side=tk.LEFT)
+        tk.Label(frame_filter, text="Dateitypen (z.B. .jpg,.png):").pack(side=tk.LEFT)
         self.ext_entry = tk.Entry(frame_filter, width=25)
         self.ext_entry.pack(side=tk.LEFT, padx=5)
 
@@ -131,9 +129,9 @@ class DuplicateFileFinderGUI:
         frame_middle = tk.Frame(self.master)
         frame_middle.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        tk.Label(frame_middle, text="Gefundene Dubletten:").pack(anchor="w")
+        tk.Label(frame_middle, text="Gefundene Dubletten:", font=("Arial", 11, "bold")).pack(anchor="w")
 
-        self.listbox = tk.Listbox(frame_middle, selectmode=tk.EXTENDED)
+        self.listbox = tk.Listbox(frame_middle, selectmode=tk.EXTENDED, font=("Consolas", 10))
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         scrollbar = tk.Scrollbar(frame_middle, orient=tk.VERTICAL, command=self.listbox.yview)
@@ -145,13 +143,21 @@ class DuplicateFileFinderGUI:
         frame_bottom.pack(fill=tk.X, padx=10, pady=10)
 
         self.summary_var = tk.StringVar(value="Noch keine Analyse durchgeführt.")
-        tk.Label(frame_bottom, textvariable=self.summary_var).pack(anchor="w")
+        tk.Label(frame_bottom, textvariable=self.summary_var, font=("Arial", 10)).pack(anchor="w")
 
-        tk.Button(frame_bottom, text="Pro Gruppe: alle bis auf eine markieren",
-                  command=self.select_all_but_one).pack(side=tk.LEFT, padx=5)
+        self.btn_select_all = ttk.Button(
+            frame_bottom,
+            text="🧹 Pro Gruppe: alle bis auf eine markieren",
+            command=self.select_all_but_one
+        )
+        self.btn_select_all.pack(side=tk.LEFT, padx=5)
 
-        tk.Button(frame_bottom, text="Ausgewählte löschen",
-                  command=self.delete_selected).pack(side=tk.LEFT, padx=5)
+        self.btn_delete = ttk.Button(
+            frame_bottom,
+            text="🗑 Ausgewählte löschen",
+            command=self.delete_selected
+        )
+        self.btn_delete.pack(side=tk.LEFT, padx=5)
 
     # --------------------------------------------------------
     # Ordnerwahl
@@ -165,8 +171,15 @@ class DuplicateFileFinderGUI:
     # Scan starten (Thread)
     # --------------------------------------------------------
     def start_scan_thread(self):
-        thread = threading.Thread(target=self.scan)
+        self.set_buttons_state("disabled")
+        thread = threading.Thread(target=self.scan, daemon=True)
         thread.start()
+
+    def set_buttons_state(self, state):
+        self.btn_scan.config(state=state)
+        self.btn_choose.config(state=state)
+        self.btn_select_all.config(state=state)
+        self.btn_delete.config(state=state)
 
     # --------------------------------------------------------
     # Scan Logik
@@ -174,31 +187,48 @@ class DuplicateFileFinderGUI:
     def scan(self):
         folder = self.selected_folder.get().strip()
         if not folder:
-            messagebox.showwarning("Hinweis", "Bitte zuerst einen Startordner wählen.")
+            self.master.after(0, lambda: messagebox.showwarning("Hinweis", "Bitte zuerst einen Startordner wählen."))
+            self.master.after(0, lambda: self.set_buttons_state("normal"))
             return
 
-        self.base_folder = folder  # Für relative Pfade
+        self.base_folder = folder
 
-        min_size = int(float(self.min_size_entry.get()) * 1024 * 1024)
+        try:
+            min_size = int(float(self.min_size_entry.get()) * 1024 * 1024)
+        except ValueError:
+            min_size = 0
+
         extensions = [e.strip().lower() for e in self.ext_entry.get().split(",") if e.strip()]
 
-        self.listbox.delete(0, tk.END)
-        self.listbox_index_to_file.clear()
-        self.summary_var.set("Scanne...")
+        def gui_reset_before_scan():
+            self.listbox.delete(0, tk.END)
+            self.listbox_index_to_file.clear()
+            self.summary_var.set("Scanne...")
+            self.progress["value"] = 0
+            self.progress_label.config(text="0%")
+
+        self.master.after(0, gui_reset_before_scan)
 
         def update_progress(done, total):
-            percent = int((done / total) * 100)
-            self.progress["value"] = percent
-            self.progress_label.config(text=f"{percent}%")
+            percent = int((done / total) * 100) if total else 0
+
+            def gui_update():
+                self.progress["value"] = percent
+                self.progress_label.config(text=f"{percent}%")
+
+            self.master.after(0, gui_update)
 
         hash_map = scan_directory(folder, min_size, extensions, update_progress)
         groups = build_duplicate_groups(hash_map)
         self.duplicate_groups = groups
 
-        self.progress["value"] = 0
-        self.progress_label.config(text="")
+        def gui_after_scan():
+            self.progress["value"] = 0
+            self.progress_label.config(text="")
+            self.display_results(groups)
+            self.set_buttons_state("normal")
 
-        self.display_results(groups)
+        self.master.after(0, gui_after_scan)
 
     # --------------------------------------------------------
     # Ergebnisse anzeigen
@@ -208,8 +238,8 @@ class DuplicateFileFinderGUI:
         total_duplicates = 0
         index = 0
 
-        for group in groups:
-            self.listbox.insert(tk.END, "------------------ Gruppe ------------------")
+        for g_index, group in enumerate(groups):
+            self.listbox.insert(tk.END, f"------------------ Gruppe {g_index+1} ------------------")
             self.listbox.itemconfig(tk.END, foreground="blue")
             index += 1
 
@@ -273,7 +303,7 @@ class DuplicateFileFinderGUI:
 
         total = sum(size for _, size in files)
 
-        preview = "\n".join(path for path, _ in files[:10])
+        preview = "\n".join(os.path.relpath(path, self.base_folder) for path, _ in files[:10])
         msg = f"{len(files)} Dateien löschen?\nGesamt: {total/1024/1024:.2f} MB\n\nBeispiele:\n{preview}"
 
         if not messagebox.askyesno("Bestätigen", msg):
@@ -296,10 +326,6 @@ class DuplicateFileFinderGUI:
     # Log schreiben (TXT)
     # --------------------------------------------------------
     def write_log(self, deleted_entries):
-        """
-        Schreibt eine Log-Datei (TXT) mit den gelöschten Dateien.
-        Der Log wird im Unterordner 'logs' gespeichert.
-        """
         log_dir = "logs"
         os.makedirs(log_dir, exist_ok=True)
 
