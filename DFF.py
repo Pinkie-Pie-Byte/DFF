@@ -23,30 +23,41 @@ def hash_file_sha256(path, chunk_size=1024 * 1024):
 
 def scan_directory(root_path, min_size, extensions, progress_callback=None, phase_callback=None):
     """
-    Optimierte Version:
-    - Nur EIN Durchlauf durch das Dateisystem
-    - Dateien sammeln + Fortschritt gleichzeitig
-    - Danach Gruppieren + Hashing
+    Zweiphasiger Scan:
+    Phase 0: Dateien zählen (schnell)
+    Phase 1: Dateien sammeln (exakte Prozentanzeige)
+    Phase 2: Gruppieren nach Größe
+    Phase 3: Hashing
     """
 
     # ------------------------------------------------------------
-    # PHASE 1 – Dateien sammeln
+    # PHASE 0 – Dateien zählen (schnell, ohne Filter)
+    # ------------------------------------------------------------
+    if phase_callback:
+        phase_callback("Zähle Dateien...")
+
+    total_files = 0
+    for _, _, filenames in os.walk(root_path):
+        total_files += len(filenames)
+
+    if total_files == 0:
+        return {}
+
+    # ------------------------------------------------------------
+    # PHASE 1 – Dateien sammeln (exakte Prozentanzeige)
     # ------------------------------------------------------------
     if phase_callback:
         phase_callback("Sammle Dateien...")
 
     all_files = []
     processed = 0
-    estimated_total = 1  # dynamische Schätzung
 
     for dirpath, _, filenames in os.walk(root_path):
-        estimated_total += len(filenames)
-
         for filename in filenames:
             processed += 1
 
             if progress_callback:
-                progress_callback(processed, estimated_total)
+                progress_callback(processed, total_files)
 
             full_path = os.path.join(dirpath, filename)
 
@@ -435,7 +446,7 @@ class DuplicateFileFinderGUI:
 
         for idx in selected:
             if idx in self.listbox_index_map:
-                g_index, f_index = self.listlistbox_index_map[idx]
+                g_index, f_index = self.listbox_index_map[idx]
                 if f_index is not None:
                     files.append(self.duplicate_groups[g_index][f_index])
 
