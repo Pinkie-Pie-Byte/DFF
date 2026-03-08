@@ -21,17 +21,36 @@ def hash_file_sha256(path, chunk_size=1024 * 1024):
     return sha.hexdigest()
 
 
-def scan_directory(root_path, min_size, extensions, progress_callback=None):
+def scan_directory(root_path, min_size, extensions, progress_callback=None, phase_callback=None):
     """
-    Optimierte Version:
-    1) Dateien nach Größe gruppieren
-    2) Nur gleiche Größen hashen
+    Optimierte Version mit 3 Phasen:
+    1) Dateien sammeln
+    2) Gruppieren nach Größe
+    3) Hashing der Kandidaten
     """
 
-    # Schritt 1: Alle passenden Dateien sammeln
+    # ------------------------------------------------------------
+    # PHASE 1 – Dateien sammeln
+    # ------------------------------------------------------------
+    if phase_callback:
+        phase_callback("Sammle Dateien...")
+
     all_files = []
+    total_files = 0
+
+    # Anzahl Dateien zählen
+    for _, _, filenames in os.walk(root_path):
+        total_files += len(filenames)
+
+    processed = 0
+
     for dirpath, _, filenames in os.walk(root_path):
         for filename in filenames:
+            processed += 1
+
+            if progress_callback:
+                progress_callback(processed, total_files)
+
             full_path = os.path.join(dirpath, filename)
 
             try:
@@ -51,12 +70,30 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None):
             except:
                 continue
 
-    # Schritt 2: Dateien nach Größe gruppieren
+    # ------------------------------------------------------------
+    # PHASE 2 – Gruppieren nach Größe
+    # ------------------------------------------------------------
+    if phase_callback:
+        phase_callback("Gruppiere nach Dateigröße...")
+
     size_map = {}
+    total = len(all_files)
+    processed = 0
+
     for path, size in all_files:
+        processed += 1
+
+        if progress_callback:
+            progress_callback(processed, total)
+
         size_map.setdefault(size, []).append(path)
 
-    # Schritt 3: Nur Gruppen mit mehr als 1 Datei weiterverarbeiten
+    # ------------------------------------------------------------
+    # PHASE 3 – Hashing der Kandidaten
+    # ------------------------------------------------------------
+    if phase_callback:
+        phase_callback("Hashing...")
+
     candidates = []
     for size, files in size_map.items():
         if len(files) > 1:
@@ -65,8 +102,6 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None):
 
     total = len(candidates)
     processed = 0
-
-    # Schritt 4: Hashen nur der Kandidaten
     hash_map = {}
 
     for path, size in candidates:
@@ -208,6 +243,13 @@ class DuplicateFileFinderGUI:
         self.master.after(120, self.animate_spinner)
 
     # --------------------------------------------------------
+    # Phase-Anzeige
+    # --------------------------------------------------------
+    def update_phase(self, text):
+        self.summary_var.set(text)
+        self.master.update_idletasks()
+
+    # --------------------------------------------------------
     # Ordnerwahl
     # --------------------------------------------------------
     def choose_folder(self):
@@ -268,7 +310,14 @@ class DuplicateFileFinderGUI:
 
             self.master.after(0, gui_update)
 
-        hash_map = scan_directory(folder, min_size, extensions, update_progress)
+        hash_map = scan_directory(
+            folder,
+            min_size,
+            extensions,
+            progress_callback=update_progress,
+            phase_callback=self.update_phase
+        )
+
         groups = build_duplicate_groups(hash_map)
         self.duplicate_groups = groups
 
