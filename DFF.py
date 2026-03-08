@@ -76,10 +76,11 @@ class DuplicateFileFinderGUI:
         self.selected_folder = tk.StringVar()
         self.base_folder = None
 
-        self.duplicate_groups = []          # Liste aller Gruppen
-        self.group_states = {}              # True = eingeklappt, False = ausgeklappt
-        self.listbox_index_map = {}         # index -> (group_index, file_index)
+        self.duplicate_groups = []
+        self.group_states = {}
+        self.listbox_index_map = {}
 
+        # Spinner
         self.spinner_running = False
         self.spinner_frames = ["|", "/", "-", "\\"]
         self.spinner_index = 0
@@ -121,6 +122,9 @@ class DuplicateFileFinderGUI:
 
         self.progress = ttk.Progressbar(frame_progress, length=400)
         self.progress.pack(side=tk.LEFT, padx=5)
+
+        self.progress_label = tk.Label(frame_progress, text="0%")
+        self.progress_label.pack(side=tk.LEFT, padx=10)
 
         self.spinner_label = tk.Label(frame_progress, text="", font=("Consolas", 14))
         self.spinner_label.pack(side=tk.LEFT, padx=10)
@@ -191,6 +195,8 @@ class DuplicateFileFinderGUI:
     # --------------------------------------------------------
     def start_scan_thread(self):
         self.disable_buttons()
+        self.progress["value"] = 0
+        self.progress_label.config(text="0%")
         self.start_spinner()
 
         thread = threading.Thread(target=self.scan, daemon=True)
@@ -230,7 +236,12 @@ class DuplicateFileFinderGUI:
 
         def update_progress(done, total):
             percent = int((done / total) * 100) if total else 0
-            self.master.after(0, lambda: self.progress.config(value=percent))
+
+            def gui_update():
+                self.progress["value"] = percent
+                self.progress_label.config(text=f"{percent}%")
+
+            self.master.after(0, gui_update)
 
         hash_map = scan_directory(folder, min_size, extensions, update_progress)
         groups = build_duplicate_groups(hash_map)
@@ -340,15 +351,13 @@ class DuplicateFileFinderGUI:
         self.listbox.selection_clear(0, tk.END)
 
         for g_index, group in enumerate(self.duplicate_groups):
-            # alle außer der ersten Datei markieren
             for f_index in range(1, len(group)):
-                # passenden Listbox-Index finden
                 for lb_index, (gi, fi) in self.listbox_index_map.items():
                     if gi == g_index and fi == f_index:
                         self.listbox.selection_set(lb_index)
 
     # --------------------------------------------------------
-    # Löschen + Log
+    # Löschen + Fortschritt
     # --------------------------------------------------------
     def delete_selected(self):
         selected = self.listbox.curselection()
@@ -372,13 +381,24 @@ class DuplicateFileFinderGUI:
         if not messagebox.askyesno("Bestätigen", msg):
             return
 
+        # Fortschritt zurücksetzen
+        self.progress["value"] = 0
+        self.progress_label.config(text="0%")
+
         deleted = []
-        for path, size in files:
+        total_files = len(files)
+
+        for i, (path, size) in enumerate(files, start=1):
             try:
                 os.remove(path)
                 deleted.append({"path": path, "size": size})
             except:
                 pass
+
+            percent = int((i / total_files) * 100)
+            self.progress["value"] = percent
+            self.progress_label.config(text=f"{percent}%")
+            self.master.update_idletasks()
 
         self.write_log(deleted)
         messagebox.showinfo("Fertig", f"{len(deleted)} Dateien gelöscht. Log erstellt.")
