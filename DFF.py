@@ -11,7 +11,6 @@ from tkinter import filedialog, messagebox, ttk
 # ------------------------------------------------------------
 
 def hash_file_sha256(path, chunk_size=1024 * 1024):
-    """Berechnet den SHA-256 Hash einer Datei."""
     sha = hashlib.sha256()
     with open(path, "rb") as f:
         while True:
@@ -23,7 +22,6 @@ def hash_file_sha256(path, chunk_size=1024 * 1024):
 
 
 def scan_directory(root_path, min_size, extensions, progress_callback=None):
-    """Durchsucht ein Verzeichnis rekursiv und liefert: dict(hash -> list of (path, size))"""
     hash_map = {}
 
     total_files = 0
@@ -55,14 +53,13 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None):
                 file_hash = hash_file_sha256(full_path)
                 hash_map.setdefault(file_hash, []).append((full_path, size))
 
-            except (PermissionError, OSError):
+            except:
                 continue
 
     return hash_map
 
 
 def build_duplicate_groups(hash_map):
-    """Filtert nur Hashes mit mehr als einer Datei."""
     return [entries for entries in hash_map.values() if len(entries) > 1]
 
 
@@ -78,8 +75,14 @@ class DuplicateFileFinderGUI:
 
         self.selected_folder = tk.StringVar()
         self.base_folder = None
-        self.duplicate_groups = []
-        self.listbox_index_to_file = {}
+
+        self.duplicate_groups = []          # Liste aller Gruppen
+        self.group_states = {}              # True = eingeklappt, False = ausgeklappt
+        self.listbox_index_map = {}         # index -> (group_index, file_index)
+
+        self.spinner_running = False
+        self.spinner_frames = ["|", "/", "-", "\\"]
+        self.spinner_index = 0
 
         self.create_widgets()
 
@@ -87,9 +90,6 @@ class DuplicateFileFinderGUI:
     # GUI Aufbau
     # --------------------------------------------------------
     def create_widgets(self):
-        style = ttk.Style()
-        style.theme_use("clam")
-
         frame_top = tk.Frame(self.master)
         frame_top.pack(fill=tk.X, padx=10, pady=10)
 
@@ -102,7 +102,7 @@ class DuplicateFileFinderGUI:
         self.btn_scan = ttk.Button(frame_top, text="🔍 Scannen", command=self.start_scan_thread)
         self.btn_scan.pack(side=tk.LEFT, padx=5)
 
-        # Filterbereich
+        # Filter
         frame_filter = tk.Frame(self.master)
         frame_filter.pack(fill=tk.X, padx=10)
 
@@ -115,15 +115,15 @@ class DuplicateFileFinderGUI:
         self.ext_entry = tk.Entry(frame_filter, width=25)
         self.ext_entry.pack(side=tk.LEFT, padx=5)
 
-        # Fortschrittsbalken
+        # Fortschritt + Spinner
         frame_progress = tk.Frame(self.master)
         frame_progress.pack(fill=tk.X, padx=10, pady=5)
 
         self.progress = ttk.Progressbar(frame_progress, length=400)
         self.progress.pack(side=tk.LEFT, padx=5)
 
-        self.progress_label = tk.Label(frame_progress, text="")
-        self.progress_label.pack(side=tk.LEFT)
+        self.spinner_label = tk.Label(frame_progress, text="", font=("Consolas", 14))
+        self.spinner_label.pack(side=tk.LEFT, padx=10)
 
         # Ergebnisliste
         frame_middle = tk.Frame(self.master)
@@ -133,6 +133,7 @@ class DuplicateFileFinderGUI:
 
         self.listbox = tk.Listbox(frame_middle, selectmode=tk.EXTENDED, font=("Consolas", 10))
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.listbox.bind("<Double-Button-1>", self.toggle_group)
 
         scrollbar = tk.Scrollbar(frame_middle, orient=tk.VERTICAL, command=self.listbox.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -160,6 +161,24 @@ class DuplicateFileFinderGUI:
         self.btn_delete.pack(side=tk.LEFT, padx=5)
 
     # --------------------------------------------------------
+    # Spinner Animation
+    # --------------------------------------------------------
+    def start_spinner(self):
+        self.spinner_running = True
+        self.animate_spinner()
+
+    def stop_spinner(self):
+        self.spinner_running = False
+        self.spinner_label.config(text="")
+
+    def animate_spinner(self):
+        if not self.spinner_running:
+            return
+        self.spinner_label.config(text=self.spinner_frames[self.spinner_index])
+        self.spinner_index = (self.spinner_index + 1) % len(self.spinner_frames)
+        self.master.after(120, self.animate_spinner)
+
+    # --------------------------------------------------------
     # Ordnerwahl
     # --------------------------------------------------------
     def choose_folder(self):
@@ -171,15 +190,23 @@ class DuplicateFileFinderGUI:
     # Scan starten (Thread)
     # --------------------------------------------------------
     def start_scan_thread(self):
-        self.set_buttons_state("disabled")
+        self.disable_buttons()
+        self.start_spinner()
+
         thread = threading.Thread(target=self.scan, daemon=True)
         thread.start()
 
-    def set_buttons_state(self, state):
-        self.btn_scan.config(state=state)
-        self.btn_choose.config(state=state)
-        self.btn_select_all.config(state=state)
-        self.btn_delete.config(state=state)
+    def disable_buttons(self):
+        self.btn_scan.config(state="disabled")
+        self.btn_choose.config(state="disabled")
+        self.btn_select_all.config(state="disabled")
+        self.btn_delete.config(state="disabled")
+
+    def enable_buttons(self):
+        self.btn_scan.config(state="normal")
+        self.btn_choose.config(state="normal")
+        self.btn_select_all.config(state="normal")
+        self.btn_delete.config(state="normal")
 
     # --------------------------------------------------------
     # Scan Logik
@@ -188,70 +215,61 @@ class DuplicateFileFinderGUI:
         folder = self.selected_folder.get().strip()
         if not folder:
             self.master.after(0, lambda: messagebox.showwarning("Hinweis", "Bitte zuerst einen Startordner wählen."))
-            self.master.after(0, lambda: self.set_buttons_state("normal"))
+            self.master.after(0, self.enable_buttons)
+            self.master.after(0, self.stop_spinner)
             return
 
         self.base_folder = folder
 
         try:
             min_size = int(float(self.min_size_entry.get()) * 1024 * 1024)
-        except ValueError:
+        except:
             min_size = 0
 
         extensions = [e.strip().lower() for e in self.ext_entry.get().split(",") if e.strip()]
 
-        def gui_reset_before_scan():
-            self.listbox.delete(0, tk.END)
-            self.listbox_index_to_file.clear()
-            self.summary_var.set("Scanne...")
-            self.progress["value"] = 0
-            self.progress_label.config(text="0%")
-
-        self.master.after(0, gui_reset_before_scan)
-
         def update_progress(done, total):
             percent = int((done / total) * 100) if total else 0
-
-            def gui_update():
-                self.progress["value"] = percent
-                self.progress_label.config(text=f"{percent}%")
-
-            self.master.after(0, gui_update)
+            self.master.after(0, lambda: self.progress.config(value=percent))
 
         hash_map = scan_directory(folder, min_size, extensions, update_progress)
         groups = build_duplicate_groups(hash_map)
         self.duplicate_groups = groups
 
-        def gui_after_scan():
-            self.progress["value"] = 0
-            self.progress_label.config(text="")
-            self.display_results(groups)
-            self.set_buttons_state("normal")
-
-        self.master.after(0, gui_after_scan)
+        self.master.after(0, lambda: self.display_results(groups))
+        self.master.after(0, self.enable_buttons)
+        self.master.after(0, self.stop_spinner)
 
     # --------------------------------------------------------
     # Ergebnisse anzeigen
     # --------------------------------------------------------
     def display_results(self, groups):
+        self.listbox.delete(0, tk.END)
+        self.listbox_index_map.clear()
+        self.group_states.clear()
+
         total_wasted = 0
         total_duplicates = 0
         index = 0
 
         for g_index, group in enumerate(groups):
-            self.listbox.insert(tk.END, f"------------------ Gruppe {g_index+1} ------------------")
+            self.group_states[g_index] = False  # ausgeklappt
+
+            header = f"[–] Gruppe {g_index+1} ({len(group)} Dateien)"
+            self.listbox.insert(tk.END, header)
             self.listbox.itemconfig(tk.END, foreground="blue")
+            self.listbox_index_map[index] = (g_index, None)
             index += 1
 
             wasted = group[0][1] * (len(group) - 1)
             total_wasted += wasted
             total_duplicates += len(group) - 1
 
-            for path, size in group:
-                relative_path = os.path.relpath(path, self.base_folder)
-                text = f"{relative_path} ({size/1024/1024:.2f} MB)"
+            for f_index, (path, size) in enumerate(group):
+                rel = os.path.relpath(path, self.base_folder)
+                text = f"    {rel} ({size/1024/1024:.2f} MB)"
                 self.listbox.insert(tk.END, text)
-                self.listbox_index_to_file[index] = (path, size)
+                self.listbox_index_map[index] = (g_index, f_index)
                 index += 1
 
             self.listbox.insert(tk.END, "")
@@ -267,43 +285,88 @@ class DuplicateFileFinderGUI:
             )
 
     # --------------------------------------------------------
+    # Gruppe ein/ausklappen
+    # --------------------------------------------------------
+    def toggle_group(self, event):
+        index = self.listbox.curselection()
+        if not index:
+            return
+        index = index[0]
+
+        if index not in self.listbox_index_map:
+            return
+
+        g_index, f_index = self.listbox_index_map[index]
+        if f_index is not None:
+            return  # kein Header
+
+        # Zustand umschalten
+        self.group_states[g_index] = not self.group_states[g_index]
+
+        self.render_groups()
+
+    def render_groups(self):
+        self.listbox.delete(0, tk.END)
+        self.listbox_index_map.clear()
+
+        index = 0
+
+        for g_index, group in enumerate(self.duplicate_groups):
+            collapsed = self.group_states[g_index]
+
+            header = f"[+] Gruppe {g_index+1} ({len(group)} Dateien)" if collapsed else \
+                     f"[–] Gruppe {g_index+1} ({len(group)} Dateien)"
+
+            self.listbox.insert(tk.END, header)
+            self.listbox.itemconfig(tk.END, foreground="blue")
+            self.listbox_index_map[index] = (g_index, None)
+            index += 1
+
+            if not collapsed:
+                for f_index, (path, size) in enumerate(group):
+                    rel = os.path.relpath(path, self.base_folder)
+                    text = f"    {rel} ({size/1024/1024:.2f} MB)"
+                    self.listbox.insert(tk.END, text)
+                    self.listbox_index_map[index] = (g_index, f_index)
+                    index += 1
+
+                self.listbox.insert(tk.END, "")
+                index += 1
+
+    # --------------------------------------------------------
     # Automatische Vorauswahl
     # --------------------------------------------------------
     def select_all_but_one(self):
         self.listbox.selection_clear(0, tk.END)
 
-        current_group = []
-
-        for i in range(self.listbox.size()):
-            text = self.listbox.get(i)
-
-            if text.startswith("------------------ Gruppe"):
-                if len(current_group) > 1:
-                    for idx in current_group[1:]:
-                        self.listbox.selection_set(idx)
-                current_group = []
-            else:
-                if i in self.listbox_index_to_file:
-                    current_group.append(i)
-
-        if len(current_group) > 1:
-            for idx in current_group[1:]:
-                self.listbox.selection_set(idx)
+        for g_index, group in enumerate(self.duplicate_groups):
+            # alle außer der ersten Datei markieren
+            for f_index in range(1, len(group)):
+                # passenden Listbox-Index finden
+                for lb_index, (gi, fi) in self.listbox_index_map.items():
+                    if gi == g_index and fi == f_index:
+                        self.listbox.selection_set(lb_index)
 
     # --------------------------------------------------------
     # Löschen + Log
     # --------------------------------------------------------
     def delete_selected(self):
         selected = self.listbox.curselection()
-        files = [(self.listbox_index_to_file[i]) for i in selected if i in self.listbox_index_to_file]
+        files = []
+
+        for idx in selected:
+            if idx in self.listbox_index_map:
+                g_index, f_index = self.listbox_index_map[idx]
+                if f_index is not None:
+                    files.append(self.duplicate_groups[g_index][f_index])
 
         if not files:
             messagebox.showinfo("Info", "Keine Dateien ausgewählt.")
             return
 
         total = sum(size for _, size in files)
-
         preview = "\n".join(os.path.relpath(path, self.base_folder) for path, _ in files[:10])
+
         msg = f"{len(files)} Dateien löschen?\nGesamt: {total/1024/1024:.2f} MB\n\nBeispiele:\n{preview}"
 
         if not messagebox.askyesno("Bestätigen", msg):
@@ -323,33 +386,26 @@ class DuplicateFileFinderGUI:
         self.start_scan_thread()
 
     # --------------------------------------------------------
-    # Log schreiben (TXT)
+    # Log schreiben
     # --------------------------------------------------------
     def write_log(self, deleted_entries):
-        log_dir = "logs"
-        os.makedirs(log_dir, exist_ok=True)
-
+        os.makedirs("logs", exist_ok=True)
         timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
-        log_filename = os.path.join(log_dir, f"dff_report_{timestamp}.txt")
+        filename = f"logs/dff_report_{timestamp}.txt"
 
-        try:
-            with open(log_filename, "w", encoding="utf-8") as f:
-                f.write("Duplicate File Finder – Löschprotokoll\n")
-                f.write("=======================================\n\n")
-                f.write(f"Zeitpunkt: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Anzahl gelöschter Dateien: {len(deleted_entries)}\n\n")
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write("Duplicate File Finder – Löschprotokoll\n")
+            f.write("=======================================\n\n")
+            f.write(f"Zeitpunkt: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Anzahl gelöschter Dateien: {len(deleted_entries)}\n\n")
 
-                total_size = sum(entry["size"] for entry in deleted_entries)
-                f.write(f"Gesamter freigegebener Speicherplatz: {total_size/1024/1024:.2f} MB\n\n")
+            total_size = sum(entry["size"] for entry in deleted_entries)
+            f.write(f"Freigegebener Speicherplatz: {total_size/1024/1024:.2f} MB\n\n")
 
-                f.write("Gelöschte Dateien:\n")
-                f.write("------------------\n")
-
-                for entry in deleted_entries:
-                    f.write(f"{entry['path']}  ({entry['size']/1024/1024:.2f} MB)\n")
-
-        except Exception as e:
-            messagebox.showerror("Fehler beim Schreiben des Logs", str(e))
+            f.write("Gelöschte Dateien:\n")
+            f.write("------------------\n")
+            for entry in deleted_entries:
+                f.write(f"{entry['path']} ({entry['size']/1024/1024:.2f} MB)\n")
 
 
 # ------------------------------------------------------------
