@@ -23,10 +23,10 @@ def hash_file_sha256(path, chunk_size=1024 * 1024):
 
 def scan_directory(root_path, min_size, extensions, progress_callback=None, phase_callback=None):
     """
-    Optimierte Version mit 3 Phasen:
-    1) Dateien sammeln
-    2) Gruppieren nach Größe
-    3) Hashing der Kandidaten
+    Optimierte Version:
+    - Nur EIN Durchlauf durch das Dateisystem
+    - Dateien sammeln + Fortschritt gleichzeitig
+    - Danach Gruppieren + Hashing
     """
 
     # ------------------------------------------------------------
@@ -36,20 +36,17 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None, phas
         phase_callback("Sammle Dateien...")
 
     all_files = []
-    total_files = 0
-
-    # Anzahl Dateien zählen
-    for _, _, filenames in os.walk(root_path):
-        total_files += len(filenames)
-
     processed = 0
+    estimated_total = 1  # dynamische Schätzung
 
     for dirpath, _, filenames in os.walk(root_path):
+        estimated_total += len(filenames)
+
         for filename in filenames:
             processed += 1
 
             if progress_callback:
-                progress_callback(processed, total_files)
+                progress_callback(processed, estimated_total)
 
             full_path = os.path.join(dirpath, filename)
 
@@ -228,8 +225,9 @@ class DuplicateFileFinderGUI:
     # Spinner Animation
     # --------------------------------------------------------
     def start_spinner(self):
-        self.spinner_running = True
-        self.animate_spinner()
+        if not self.spinner_running:
+            self.spinner_running = True
+            self.animate_spinner()
 
     def stop_spinner(self):
         self.spinner_running = False
@@ -437,7 +435,7 @@ class DuplicateFileFinderGUI:
 
         for idx in selected:
             if idx in self.listbox_index_map:
-                g_index, f_index = self.listbox_index_map[idx]
+                g_index, f_index = self.listlistbox_index_map[idx]
                 if f_index is not None:
                     files.append(self.duplicate_groups[g_index][f_index])
 
