@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 
 
 # ------------------------------------------------------------
-# Hilfsfunktionen
+# Globale Hilfsfunktionen (für Tests & GUI)
 # ------------------------------------------------------------
 
 def hash_file_sha256(path, chunk_size=1024 * 1024):
@@ -147,7 +147,7 @@ class DuplicateFileFinderGUI:
         self.duplicate_groups = []
         self.group_states = {}
         self.listbox_index_map = {}
-
+        
         # Spinner
         self.spinner_running = False
         self.spinner_frames = ["|", "/", "-", "\\"]
