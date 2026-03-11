@@ -1,0 +1,45 @@
+import os
+import pytest
+from DFF import scan_directory, build_duplicate_groups, delete_files, write_log
+
+TEST_DIR = r"C:\Users\gabri\Desktop\TEKO\02_Lösungsalgorithmen, Praogrammierung\03_Projektarbeit\DFF_Projekt\Testordner"
+
+
+@pytest.fixture
+def test_directory():
+    return TEST_DIR
+
+
+def test_full_run_delete_duplicates(test_directory):
+    # 1. Scan durchführen
+    hash_map = scan_directory(TEST_DIR, min_size=0, extensions=[])
+    groups = build_duplicate_groups(hash_map)
+
+    # Sicherstellen, dass es Dublettengruppen gibt
+    assert len(groups) > 0, "Keine Dublettengruppen gefunden!"
+
+    # 2. Nur die Dubletten löschen (wie GUI: eine Datei pro Gruppe behalten)
+    duplicates_to_delete = []
+
+    for group in groups:
+        # Gruppe hat mindestens 2 Dateien
+        assert len(group) >= 2, "Gruppe enthält keine echten Dubletten!"
+
+        # Erste Datei behalten, Rest löschen
+        for path, size in group[1:]:
+            duplicates_to_delete.append((path, size))
+
+    # 3. Dateien löschen
+    deleted = delete_files(duplicates_to_delete)
+
+    # Sicherstellen, dass delete_files überhaupt etwas gelöscht hat
+    assert len(deleted) == len(duplicates_to_delete), "Nicht alle Dubletten wurden gelöscht!"
+
+    # 4. Prüfen, ob Dateien wirklich weg sind
+    for entry in deleted:
+        assert not os.path.exists(entry["path"]), f"Datei wurde nicht gelöscht: {entry['path']}"
+
+    # 5. Logfile schreiben
+    logfile = write_log(deleted, log_dir="logs")
+
+    assert os.path.exists(logfile), "Logfile wurde nicht erstellt!"
