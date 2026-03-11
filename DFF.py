@@ -82,7 +82,9 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None, phas
     Phase 3: Hashing
     """
 
-    # PHASE 0 – Dateien zählen
+    # ------------------------------------------------------------
+    # PHASE 0 – Dateien zählen (schnell, ohne Filter)
+    # ------------------------------------------------------------
     if phase_callback:
         phase_callback("Zähle Dateien...")
 
@@ -93,7 +95,9 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None, phas
     if total_files == 0:
         return {}
 
-    # PHASE 1 – Dateien sammeln
+    # ------------------------------------------------------------
+    # PHASE 1 – Dateien sammeln (exakte Prozentanzeige)
+    # ------------------------------------------------------------
     if phase_callback:
         phase_callback("Sammle Dateien...")
 
@@ -126,7 +130,9 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None, phas
             except:
                 continue
 
+    # ------------------------------------------------------------
     # PHASE 2 – Gruppieren nach Größe
+    # ------------------------------------------------------------
     if phase_callback:
         phase_callback("Gruppiere nach Dateigröße...")
 
@@ -142,7 +148,9 @@ def scan_directory(root_path, min_size, extensions, progress_callback=None, phas
 
         size_map.setdefault(size, []).append(path)
 
-    # PHASE 3 – Hashing
+    # ------------------------------------------------------------
+    # PHASE 3 – Hashing der Kandidaten
+    # ------------------------------------------------------------
     if phase_callback:
         phase_callback("Hashing...")
 
@@ -192,6 +200,7 @@ class DuplicateFileFinderGUI:
         self.group_states = {}
         self.listbox_index_map = {}
 
+        # Spinner
         self.spinner_running = False
         self.spinner_frames = ["|", "/", "-", "\\"]
         self.spinner_index = 0
@@ -390,7 +399,7 @@ class DuplicateFileFinderGUI:
         index = 0
 
         for g_index, group in enumerate(groups):
-            self.group_states[g_index] = False
+            self.group_states[g_index] = False  # ausgeklappt
 
             header = f"[–] Gruppe {g_index+1} ({len(group)} Dateien)"
             self.listbox.insert(tk.END, header)
@@ -435,7 +444,7 @@ class DuplicateFileFinderGUI:
 
         g_index, f_index = self.listbox_index_map[index]
         if f_index is not None:
-            return
+            return  # kein Header
 
         self.group_states[g_index] = not self.group_states[g_index]
         self.render_groups()
@@ -529,13 +538,15 @@ class DuplicateFileFinderGUI:
         self.start_scan_thread()
 
     # --------------------------------------------------------
-    # Log schreiben (GUI-Version)
+    # Log schreiben (Fix 1 – robust + Fallback)
     # --------------------------------------------------------
     def write_log(self, deleted_entries):
+        # Ordner robust erstellen
         try:
             os.makedirs("logs", exist_ok=True)
             log_dir = "logs"
         except PermissionError:
+            # Fallback: Benutzerordner
             log_dir = os.path.join(os.path.expanduser("~"), "DFF_logs")
             os.makedirs(log_dir, exist_ok=True)
 
@@ -547,13 +558,14 @@ class DuplicateFileFinderGUI:
             f.write("=======================================\n\n")
             f.write(f"Zeitpunkt: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Anzahl gelöschter Dateien: {len(deleted_entries)}\n\n")
-            total_size: int = sum(entry["size"] for entry in deleted_entries)
-        f.write(f"Freigegebener Speicherplatz: {total_size/1024/1024:.2f} MB\n\n")
 
-        f.write("Gelöschte Dateien:\n")
-        f.write("------------------\n")
-        for entry in deleted_entries:
-            f.write(f"{entry['path']} ({entry['size']/1024/1024:.2f} MB)\n")
+            total_size = sum(entry["size"] for entry in deleted_entries)
+            f.write(f"Freigegebener Speicherplatz: {total_size/1024/1024:.2f} MB\n\n")
+
+            f.write("Gelöschte Dateien:\n")
+            f.write("------------------\n")
+            for entry in deleted_entries:
+                f.write(f"{entry['path']} ({entry['size']/1024/1024:.2f} MB)\n")
 
 
 # ------------------------------------------------------------
